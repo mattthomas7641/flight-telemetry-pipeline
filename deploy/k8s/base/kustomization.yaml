@@ -1,0 +1,35 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: flightline
+labels:
+  - includeSelectors: true
+    pairs:
+      app.kubernetes.io/part-of: flightline
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - ingest.yaml
+  - writer.yaml
+  - alerter.yaml
+  - compactor.yaml
+  - networkpolicy.yaml
+configMapGenerator:
+  # Hash-suffixed: editing the catalog or rules rolls every pod that mounts them, so
+  # a policy change is a deploy (reviewed, auditable, revertible), never a hot edit.
+  - name: flightline-policy
+    files:
+      - catalog.yaml=../../../config/catalog.yaml
+      - rules.yaml=../../../config/rules.yaml
+  - name: flightline-env
+    literals:
+      - FLIGHTLINE_SHARDS=8
+      - FLIGHTLINE_LOG_LEVEL=INFO
+      - FLIGHTLINE_CATALOG_PATH=/etc/flightline/catalog.yaml
+      - FLIGHTLINE_RULES_PATH=/etc/flightline/rules.yaml
+      - FLIGHTLINE_REDIS_URL=redis://redis:6379/0
+      - FLIGHTLINE_SINK=s3
+      - FLIGHTLINE_S3_BUCKET=flightline-telemetry
+images:
+  - name: flightline
+    newName: flightline
+    newTag: dev

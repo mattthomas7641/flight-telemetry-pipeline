@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: redis }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: redis }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          args: ["--appendonly", "yes", "--appendfsync", "everysec"]
+          ports: [{ containerPort: 6379 }]
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts: [{ name: data, mountPath: /data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: { requests: { storage: 1Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector: { app.kubernetes.io/name: redis }
+  ports: [{ port: 6379 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: s3
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: s3 }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: s3 }
+    spec:
+      containers:
+        - name: localstack
+          image: localstack/localstack:4.0
+          env: [{ name: SERVICES, value: s3 }]
+          ports: [{ containerPort: 4566 }]
+          readinessProbe:
+            exec: { command: ["sh", "-c", "awslocal s3api head-bucket --bucket flightline-telemetry"] }
+            periodSeconds: 3
+          lifecycle:
+            postStart:
+              exec:
+                command: ["sh", "-c", "until awslocal s3api list-buckets >/dev/null 2>&1; do sleep 1; done; awslocal s3api create-bucket --bucket flightline-telemetry"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: s3
+spec:
+  selector: { app.kubernetes.io/name: s3 }
+  ports: [{ port: 4566 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pager
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: pager }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: pager }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: pager
+          image: flightline
+          args: ["pager-mock", "--port", "8090"]
+          ports: [{ containerPort: 8090 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pager
+spec:
+  selector: { app.kubernetes.io/name: pager }
+  ports: [{ port: 8090 }]
+---
+# In-cluster deps are reachable from the app pods (prod uses managed AWS services).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-intra-namespace
+spec:
+  podSelector: {}
+  ingress:
+    - from: [{ podSelector: {} }]

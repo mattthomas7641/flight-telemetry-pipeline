@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: compactor
+spec:
+  schedule: "20 * * * *"  # hourly, compacting the hour that closed 2h ago
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      activeDeadlineSeconds: 3000
+      template:
+        metadata:
+          labels: { app.kubernetes.io/name: compactor }
+        spec:
+          serviceAccountName: flightline
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: compactor
+              image: flightline
+              args: ["compact"]
+              envFrom: [{ configMapRef: { name: flightline-env } }]
+              resources:
+                requests: { cpu: "1", memory: 2Gi }
+                limits: { memory: 4Gi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: [ALL] }
+              volumeMounts:
+                - { name: policy, mountPath: /etc/flightline, readOnly: true }
+          volumes:
+            - name: policy
+              configMap: { name: flightline-policy }

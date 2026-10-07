@@ -1,0 +1,58 @@
+# Stateless; replicas are managed by KEDA on stream lag (components/keda).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: writer
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: writer }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: writer }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+    spec:
+      serviceAccountName: flightline
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      # Long enough for SIGTERM -> final flush -> ack. Anything still unacked after
+      # this is reclaimed by another replica, so the budget bounds latency, not safety.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: writer
+          image: flightline
+          args: ["writer"]
+          ports: [{ name: metrics, containerPort: 9100 }]
+          envFrom: [{ configMapRef: { name: flightline-env } }]
+          env:
+            - name: FLIGHTLINE_CONSUMER_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { memory: 2Gi }
+          livenessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            periodSeconds: 15
+            failureThreshold: 4
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: policy, mountPath: /etc/flightline, readOnly: true }
+      volumes:
+        - name: policy
+          configMap: { name: flightline-policy }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: writer
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: writer }

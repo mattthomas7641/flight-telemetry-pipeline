@@ -1,0 +1,42 @@
+# Self-contained cluster demo: adds Redis, LocalStack S3 and the pager mock in-cluster.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: flightline
+resources:
+  - ../../base
+  - deps.yaml
+configMapGenerator:
+  - name: flightline-env
+    behavior: merge
+    literals:
+      - FLIGHTLINE_S3_ENDPOINT_URL=http://s3:4566
+      - FLIGHTLINE_PAGERDUTY_URL=http://pager:8090/v2/enqueue
+      - FLIGHTLINE_FLUSH_INTERVAL_S=3
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+secretGenerator:
+  - name: flightline-secrets
+    options: { disableNameSuffixHash: true }
+    literals:
+      - pagerduty-routing-key=local-demo
+patches:
+  - target: { kind: Deployment, name: ingest }
+    patch: |-
+      - { op: replace, path: /spec/template/spec/containers/0/resources/requests/cpu, value: 100m }
+  - target: { kind: Deployment, name: writer }
+    patch: |-
+      - { op: replace, path: /spec/template/spec/containers/0/resources/requests, value: { cpu: 100m, memory: 256Mi } }
+  - target: { kind: StatefulSet, name: alerter }
+    patch: |-
+      - { op: replace, path: /spec/template/spec/containers/0/resources, value: { requests: { cpu: 100m, memory: 256Mi }, limits: { cpu: 500m, memory: 256Mi } } }
+  # LocalStack runs as root, which the restricted Pod Security level rejects. Prod
+  # (overlays/aws) keeps `restricted`; only this demo overlay relaxes it.
+  - target: { kind: Namespace, name: flightline }
+    patch: |-
+      - { op: replace, path: /metadata/labels/pod-security.kubernetes.io~1enforce, value: baseline }
+      - { op: add, path: /metadata/labels/pod-security.kubernetes.io~1warn, value: restricted }
+images:
+  - name: flightline
+    newName: flightline
+    newTag: dev

@@ -1,0 +1,96 @@
+# StatefulSet, not Deployment: each replica owns a fixed set of shards (by ordinal) and
+# a stable consumer name, so on restart it replays exactly its own unacked entries.
+# FLIGHTLINE_ALERTER_REPLICAS must equal spec.replicas; changing it is a deliberate
+# reshard, not an autoscaling event.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: alerter
+spec:
+  serviceName: alerter
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels: { app.kubernetes.io/name: alerter }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: alerter }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+    spec:
+      serviceAccountName: flightline
+      priorityClassName: flightline-safety-critical
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels: { app.kubernetes.io/name: alerter }
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: alerter
+          image: flightline
+          args: ["alerter"]
+          ports: [{ name: metrics, containerPort: 9100 }]
+          envFrom: [{ configMapRef: { name: flightline-env } }]
+          env:
+            - name: FLIGHTLINE_CONSUMER_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: FLIGHTLINE_ALERTER_REPLICAS
+              value: "2"
+            - name: FLIGHTLINE_PAGERDUTY_ROUTING_KEY
+              valueFrom:
+                secretKeyRef: { name: flightline-secrets, key: pagerduty-routing-key }
+            - name: FLIGHTLINE_SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef: { name: flightline-secrets, key: slack-webhook-url, optional: true }
+          resources:
+            # Guaranteed QoS (requests == limits): the paging path is the last thing
+            # that should be evicted under node pressure.
+            requests: { cpu: 500m, memory: 512Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          livenessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            periodSeconds: 10
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: policy, mountPath: /etc/flightline, readOnly: true }
+      volumes:
+        - name: policy
+          configMap: { name: flightline-policy }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alerter
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: alerter }
+  ports: [{ name: metrics, port: 9100 }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: alerter
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: alerter }
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: flightline-safety-critical
+value: 1000000
+description: Safety paging path; preempts batch work under pressure.

@@ -1,0 +1,68 @@
+# Scale writers on what actually matters: unprocessed entries per shard. CPU would lag
+# behind a burst (the writer blocks on I/O), stream lag leads it. KEDA takes the max
+# across triggers, so one hot shard is enough to scale out.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: writer
+spec:
+  scaleTargetRef: { name: writer }
+  minReplicaCount: 2
+  maxReplicaCount: 24
+  pollingInterval: 5
+  cooldownPeriod: 300
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies: [{ type: Percent, value: 200, periodSeconds: 15 }]
+  triggers:
+    - type: redis-streams
+      metadata:
+        addressFromEnv: KEDA_REDIS_ADDRESS
+        stream: fl:telemetry:0
+        consumerGroup: writer
+        lagCount: "200"
+    - type: redis-streams
+      metadata:
+        addressFromEnv: KEDA_REDIS_ADDRESS
+        stream: fl:telemetry:1
+        consumerGroup: writer
+        lagCount: "200"
+    - type: redis-streams
+      metadata:
+        addressFromEnv: KEDA_REDIS_ADDRESS
+        stream: fl:telemetry:2
+        consumerGroup: writer
+        lagCount: "200"
+    - type: redis-streams
+      metadata:
+        addressFromEnv: KEDA_REDIS_ADDRESS
+        stream: fl:telemetry:3
+        consumerGroup: writer
+        lagCount: "200"
+    - type: redis-streams
+      metadata:
+        addressFromEnv: KEDA_REDIS_ADDRESS
+        stream: fl:telemetry:4
+        consumerGroup: writer
+        lagCount: "200"
+    - type: redis-streams
+      metadata:
+        addressFromEnv: KEDA_REDIS_ADDRESS
+        stream: fl:telemetry:5
+        consumerGroup: writer
+        lagCount: "200"
+    - type: redis-streams
+      metadata:
+        addressFromEnv: KEDA_REDIS_ADDRESS
+        stream: fl:telemetry:6
+        consumerGroup: writer
+        lagCount: "200"
+    - type: redis-streams
+      metadata:
+        addressFromEnv: KEDA_REDIS_ADDRESS
+        stream: fl:telemetry:7
+        consumerGroup: writer
+        lagCount: "200"

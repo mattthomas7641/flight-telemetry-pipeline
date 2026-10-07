@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingest
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: ingest }
+  strategy:
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 25% }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: ingest }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics/
+    spec:
+      serviceAccountName: flightline
+      securityContext: &podsec
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app.kubernetes.io/name: ingest }
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: ingest
+          image: flightline
+          args: ["ingest", "--port", "8080"]
+          ports: [{ name: http, containerPort: 8080 }]
+          envFrom: [{ configMapRef: { name: flightline-env } }]
+          env:
+            - name: FLIGHTLINE_API_KEYS
+              valueFrom:
+                secretKeyRef: { name: flightline-secrets, key: api-keys, optional: true }
+          resources:
+            requests: { cpu: 500m, memory: 256Mi }
+            limits: { memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          lifecycle:
+            # Let endpoints drop this pod before uvicorn stops accepting connections.
+            preStop: { sleep: { seconds: 5 } }
+          securityContext: &csec
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: policy, mountPath: /etc/flightline, readOnly: true }
+      volumes:
+        - name: policy
+          configMap: { name: flightline-policy }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingest
+spec:
+  selector: { app.kubernetes.io/name: ingest }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+# Ingest is CPU-bound (validation + tagging), so CPU is the honest scaling signal.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ingest
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: ingest }
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: 65 }
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0  # bursts arrive fast; scale up immediately
+      policies: [{ type: Percent, value: 100, periodSeconds: 15 }]
+    scaleDown:
+      stabilizationWindowSeconds: 300
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ingest
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: ingest }

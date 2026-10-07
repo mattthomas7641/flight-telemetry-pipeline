@@ -1,0 +1,36 @@
+# EKS: S3 via IRSA (no static keys), ElastiCache for Redis with TLS, secrets from
+# AWS Secrets Manager via External Secrets, writer autoscaling via KEDA.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: flightline
+resources:
+  - ../../base
+  - external-secret.yaml
+components:
+  - ../../components/keda
+configMapGenerator:
+  - name: flightline-env
+    behavior: merge
+    literals:
+      - FLIGHTLINE_REDIS_URL=rediss://flightline.xxxxxx.use1.cache.amazonaws.com:6379/0
+      - AWS_DEFAULT_REGION=us-east-1
+patches:
+  - target: { kind: ServiceAccount, name: flightline }
+    patch: |-
+      - op: add
+        path: /metadata/annotations
+        value:
+          eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/flightline-pipeline
+  # IRSA needs the projected token, which the base SA disables by default.
+  - target: { kind: ServiceAccount, name: flightline }
+    patch: |-
+      - { op: replace, path: /automountServiceAccountToken, value: true }
+  - target: { kind: ScaledObject, name: writer }
+    patch: |-
+      - op: add
+        path: /spec/triggers/0/metadata/enableTLS
+        value: "true"
+images:
+  - name: flightline
+    newName: 123456789012.dkr.ecr.us-east-1.amazonaws.com/flightline
+    newTag: 0.1.0

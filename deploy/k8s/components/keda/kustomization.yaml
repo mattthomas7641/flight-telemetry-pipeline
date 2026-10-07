@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - writer-scaledobject.yaml
+patches:
+  # KEDA resolves `addressFromEnv` against the scale target's container env.
+  # One trigger per shard: keep this list in sync with FLIGHTLINE_SHARDS (8).
+  - target: { kind: Deployment, name: writer }
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: { name: KEDA_REDIS_ADDRESS, value: "redis:6379" }
