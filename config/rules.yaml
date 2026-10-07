@@ -1,0 +1,53 @@
+# Safety threshold rules evaluated against every governed sample.
+#
+#   direction      above | below
+#   warn/critical  thresholds; either may be omitted
+#   sustain_ms     a level must hold this long (event time) before it fires,
+#                  which filters single-sample spikes without adding wall-clock delay
+#   hysteresis     how far back across the threshold a value must go to clear,
+#                  which stops an alert flapping when a reading hovers at the limit
+#   runbook        linked from every page so the on-call knows what to do
+
+rules:
+  - id: motor_winding_overtemp
+    channels: "motor.*.winding_temp_c"
+    direction: above
+    warn: 140
+    critical: 165
+    sustain_ms: 400
+    hysteresis: 5
+    runbook: docs/RUNBOOK.md#motor-winding-overtemp
+
+  - id: battery_cell_overtemp
+    channels: "battery.*.cell_temp_max_c"
+    direction: above
+    warn: 55
+    critical: 65
+    sustain_ms: 1000
+    hysteresis: 2
+    runbook: docs/RUNBOOK.md#battery-cell-overtemp
+
+  - id: battery_pack_undervoltage
+    channels: "battery.pack_voltage_v"
+    direction: below
+    warn: 640
+    critical: 600
+    sustain_ms: 500
+    hysteresis: 10
+    runbook: docs/RUNBOOK.md#battery-pack-undervoltage
+
+  - id: structural_vibration
+    channels: "struct.vibration_g_rms"
+    direction: above
+    warn: 3.0
+    critical: 5.0
+    sustain_ms: 250
+    hysteresis: 0.3
+    runbook: docs/RUNBOOK.md#structural-vibration
+
+# A pipeline that goes quiet is more dangerous than one that is loud. If an active
+# flight stops producing frames for this long, page.
+telemetry_loss:
+  timeout_s: 5
+  severity: critical
+  runbook: docs/RUNBOOK.md#telemetry-loss
