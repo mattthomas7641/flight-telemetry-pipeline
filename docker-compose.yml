@@ -1,0 +1,104 @@
+# Full local stack: ingest -> Redis Streams -> {writer x2 -> S3 (LocalStack), alerter -> pager}
+# plus Prometheus + Grafana. `make up`, then `make demo`.
+
+x-app: &app
+  build: .
+  image: flightline:dev
+  restart: unless-stopped
+  environment: &app-env
+    FLIGHTLINE_REDIS_URL: redis://redis:6379/0
+    FLIGHTLINE_SHARDS: "4"
+    FLIGHTLINE_LOG_LEVEL: INFO
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    # AOF with fsync every second: on a crash we lose at most ~1s of *unacked* entries,
+    # and producers still hold those (they only drop a batch after a 202).
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 15
+
+  # LocalStack stands in for AWS S3, so the writer runs the same boto3 code path as prod.
+  s3:
+    image: localstack/localstack:4.0
+    environment:
+      SERVICES: s3
+    ports: ["4566:4566"]
+    volumes:
+      - ./ops/localstack/init-s3.sh:/etc/localstack/init/ready.d/init-s3.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal s3api head-bucket --bucket flightline-telemetry"]
+      interval: 3s
+      retries: 30
+
+  ingest:
+    <<: *app
+    command: ["ingest", "--port", "8080"]
+    ports: ["8080:8080"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/readyz')"]
+      interval: 3s
+      retries: 20
+
+  writer:
+    <<: *app
+    command: ["writer"]
+    deploy:
+      replicas: 2
+    environment:
+      <<: *app-env
+      FLIGHTLINE_SINK: s3
+      FLIGHTLINE_S3_BUCKET: flightline-telemetry
+      FLIGHTLINE_S3_ENDPOINT_URL: http://s3:4566
+      FLIGHTLINE_FLUSH_INTERVAL_S: "3"
+      FLIGHTLINE_RECLAIM_IDLE_MS: "15000"
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+    depends_on:
+      redis:
+        condition: service_healthy
+      s3:
+        condition: service_healthy
+
+  alerter:
+    <<: *app
+    command: ["alerter"]
+    hostname: alerter-0
+    environment:
+      <<: *app-env
+      FLIGHTLINE_ALERTER_REPLICAS: "1"
+      FLIGHTLINE_ALERTER_ORDINAL: "0"
+      FLIGHTLINE_PAGERDUTY_URL: http://pager:8090/v2/enqueue
+      FLIGHTLINE_PAGERDUTY_ROUTING_KEY: local-demo
+
+  pager:
+    <<: *app
+    command: ["pager-mock", "--port", "8090"]
+    ports: ["8090:8090"]
+    depends_on: []
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    volumes:
+      - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./ops/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/flightline.json
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]

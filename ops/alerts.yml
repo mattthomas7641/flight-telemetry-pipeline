@@ -1,0 +1,50 @@
+# Alerts on the pipeline itself. The flight-safety pages come from the alerter; these
+# page the platform on-call when the thing that pages is at risk.
+groups:
+  - name: flightline-pipeline
+    rules:
+      - alert: AlertLatencyHigh
+        expr: histogram_quantile(0.99, sum by (le) (rate(flightline_alert_latency_seconds_bucket[5m]))) > 2
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: p99 ingest-to-page latency above 2s
+          runbook: docs/RUNBOOK.md#alert-latency-high
+
+      - alert: WriterFallingBehind
+        expr: flightline_stream_lag_entries{group="writer"} > 5000
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Lake writer lag growing; check KEDA scaling and S3 errors
+          runbook: docs/RUNBOOK.md#writer-falling-behind
+
+      - alert: AlerterLagging
+        expr: max(flightline_stream_lag_entries{group="alerter"}) > 100
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: Alerter is behind the stream; safety pages are delayed
+          runbook: docs/RUNBOOK.md#alerter-lagging
+
+      - alert: PageDeliveryFailing
+        expr: increase(flightline_notify_failures_total{notifier="pagerduty"}[5m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: Alerts are firing but PagerDuty delivery is failing
+          runbook: docs/RUNBOOK.md#page-delivery-failing
+
+      - alert: DeadLetteredEntries
+        expr: increase(flightline_dead_lettered_total[10m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: Stream entries could not be decoded and were parked in fl:deadletter
+          runbook: docs/RUNBOOK.md#dead-lettered-entries
+
+      - alert: QuarantineSpike
+        expr: sum(rate(flightline_ingest_quarantined_total[5m])) > 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Frames are being quarantined; a DAU is likely misconfigured
+          runbook: docs/RUNBOOK.md#quarantine-spike
