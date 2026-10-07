@@ -1,0 +1,94 @@
+# Governance catalog: the single source of truth for which telemetry channels may
+# land in the data lake, and how each one is classified, owned and retained.
+#
+# A channel that does not match an entry here is NOT stored: the frame carrying it
+# is quarantined with reason `unregistered_channel`. That is deliberate, the point of
+# governance-at-ingest is that nothing lands untagged.
+#
+# Patterns are matched in order with fnmatch semantics; first match wins.
+
+version: 3
+
+retention_classes:
+  # Names are what gets written into object tags; S3 lifecycle rules key off them
+  # (see deploy/terraform/s3.tf). Keep this list small and stable.
+  ephemeral: 30          # high-rate debug channels
+  flight_test: 2555      # 7 years; matches certification record-keeping expectations
+  engineering: 365
+
+# Ordered least -> most restrictive. A row's classification decides its S3 prefix,
+# which is what IAM policies are scoped to.
+classifications: [internal, proprietary, export_controlled]
+
+channels:
+  - pattern: "motor.*.winding_temp_c"
+    unit: degC
+    classification: proprietary
+    owner: propulsion
+    retention: flight_test
+    physical_range: [-60, 260]
+
+  - pattern: "motor.*.rpm"
+    unit: rpm
+    classification: proprietary
+    owner: propulsion
+    retention: flight_test
+    physical_range: [0, 9000]
+
+  - pattern: "battery.*.cell_temp_max_c"
+    unit: degC
+    classification: proprietary
+    owner: energy-storage
+    retention: flight_test
+    physical_range: [-40, 120]
+
+  - pattern: "battery.pack_voltage_v"
+    unit: V
+    classification: proprietary
+    owner: energy-storage
+    retention: flight_test
+    physical_range: [0, 1000]
+
+  - pattern: "battery.pack_current_a"
+    unit: A
+    classification: proprietary
+    owner: energy-storage
+    retention: flight_test
+    physical_range: [-500, 2500]
+
+  - pattern: "battery.soc_pct"
+    unit: pct
+    classification: internal
+    owner: energy-storage
+    retention: flight_test
+    physical_range: [0, 100]
+
+  # Navigation and flight-control state of a developmental aircraft is treated as
+  # export controlled. It lands under its own prefix with its own access policy.
+  - pattern: "nav.*"
+    unit: mixed
+    classification: export_controlled
+    owner: flight-sciences
+    retention: flight_test
+    physical_range: [-1000000, 1000000]
+
+  - pattern: "fcs.*"
+    unit: deg
+    classification: export_controlled
+    owner: flight-controls
+    retention: flight_test
+    physical_range: [-180, 180]
+
+  - pattern: "struct.vibration_g_rms"
+    unit: g
+    classification: proprietary
+    owner: structures
+    retention: engineering
+    physical_range: [0, 50]
+
+  - pattern: "debug.*"
+    unit: raw
+    classification: internal
+    owner: flight-test-instrumentation
+    retention: ephemeral
+    physical_range: [-1.0e12, 1.0e12]
