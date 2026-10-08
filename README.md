@@ -1,4 +1,6 @@
-# Flightline
+# Flight Telemetry Pipeline
+
+> Python package and CLI: `flightline`
 
 **A governed flight-test telemetry pipeline.** Ingests high-rate time-series from
 aircraft data acquisition units, classifies and tags every sample *before* it lands,
