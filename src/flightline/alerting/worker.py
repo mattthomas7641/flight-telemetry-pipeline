@@ -104,6 +104,9 @@ class Alerter:
             except Exception:
                 log.exception("alerter iteration failed")
                 await asyncio.sleep(1)
+            # A read that returns without suspending (a hot stream, or an in-process
+            # Redis) would otherwise starve every other task on the loop.
+            await asyncio.sleep(0)
 
     async def poll_once(self) -> None:
         entries = await self.bus.read(

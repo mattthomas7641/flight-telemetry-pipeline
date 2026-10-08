@@ -188,6 +188,9 @@ class LakeWriter:
                 log.exception("writer iteration failed; retrying", extra={"backoff_s": backoff})
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
+            # Yield even when the read returned without suspending, so a hot stream
+            # cannot starve the health server or the stop signal.
+            await asyncio.sleep(0)
         await self.flush()
 
     async def poll_once(self) -> None:
