@@ -1,5 +1,14 @@
 # Flight Telemetry Pipeline
 
+> **Archived.** Its alerting
+> engine (threshold rules with sustain windows, hysteresis, severity levels and
+> per-incident dedup) now lives in
+> [ticket-price-monitor](https://github.com/mattthomas7641/ticket-price-monitor)
+> (`ticket_buzzer/alerting/`), where it decides when a resale ticket price is
+> worth a push notification. On that project's recorded price history it cut
+> alerts by 67–81% and noise alerts from 32 to 1. See that README's
+> Results section.
+
 > Python package and CLI: `flightline`
 
 **A governed flight-test telemetry pipeline.** Ingests high-rate time-series from
